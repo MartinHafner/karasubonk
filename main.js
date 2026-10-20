@@ -691,11 +691,12 @@ function getCustomImageWeightScaleSoundVolume(customName)
 }
 
 // Acquire a set of images, sounds, and associated properties for a custom bonk
-function getCustomImagesWeightsScalesSoundsVolumes(customName)
+function getCustomImagesWeightsScalesSoundsVolumes(customName, customAmount)
 {
   var getImagesWeightsScalesSoundsVolumes = [];
 
-  for (var i = 0; i < data.customBonks[customName].barrageCount; i++)
+  var count = customAmount == null ? data.customBonks[customName].barrageCount : customAmount;
+  for (var i = 0; i < count; i++)
     getImagesWeightsScalesSoundsVolumes.push(getCustomImageWeightScaleSoundVolume(customName));
 
   return getImagesWeightsScalesSoundsVolumes;
@@ -704,11 +705,11 @@ function getCustomImagesWeightsScalesSoundsVolumes(customName)
 ipcMain.on("testCustomBonk", (_, message) => { custom(message); });
 
 // A custom bonk test
-function custom(customName)
+function custom(customName, customAmount)
 {
   console.log("Sending Custom");
   if (socket != null && hasActiveImageCustom(customName)) {
-    const imagesWeightsScalesSoundsVolumes = getCustomImagesWeightsScalesSoundsVolumes(customName);
+    const imagesWeightsScalesSoundsVolumes = getCustomImagesWeightsScalesSoundsVolumes(customName, customAmount);
     var images = [], weights = [], scales = [], sounds = [], volumes = [], impactDecals = [], windupSounds = [], pixels = [];
     for (var i = 0; i < imagesWeightsScalesSoundsVolumes.length; i++) {
       images[i] = imagesWeightsScalesSoundsVolumes[i].location;
@@ -887,6 +888,10 @@ function hasActiveBitSound()
 // Event Handlers
 // --------------
 
+// Maximum number of bonks a viewer can request with a variable command (e.g. "!subs 25").
+// Higher requests are clamped to this value.
+const MAX_VARIABLE_BONKS = 50;
+
 var commandCooldowns = {};
 function onMessageHandler(_, _, text, msg)
 {
@@ -894,14 +899,20 @@ function onMessageHandler(_, _, text, msg)
 
   if (data.commands != null)
   {
+    // Split the chat message into the command word and an optional amount, e.g. "!subs 25"
+    const parts = text.trim().split(/\s+/);
+    const typedCommand = parts[0].toLowerCase();
+    const typedArg = parts.length > 1 ? parts[1] : null;
+
     for (var i = 0; i < data.commands.length; i++)
     {
-      const commandName = data.commands[i].name.toLowerCase();
+      // Command names may be configured as "!subs" or "!subs {var}" - the placeholder is optional
+      const commandName = data.commands[i].name.replace(/\s*\{var\}\s*$/i, "").trim().toLowerCase();
 
       if (commandName == "")
         continue;
 
-      if (commandName != text.toLowerCase())
+      if (commandName != typedCommand)
         continue;
 
       if (data.commands[i].modOnly && !msg.userInfo.isBroadcaster && !msg.userInfo.isMod)
@@ -910,13 +921,27 @@ function onMessageHandler(_, _, text, msg)
       if (commandCooldowns[commandName])
         continue;
 
+      // Optional amount: must be a positive whole number, otherwise the message is ignored
+      var amount = null;
+      if (typedArg != null)
+      {
+        if (!/^\d+$/.test(typedArg))
+          continue;
+        amount = Math.min(parseInt(typedArg, 10), MAX_VARIABLE_BONKS);
+        if (amount < 1)
+          continue;
+      }
+
       switch (data.commands[i].bonkType)
       {
         case "single":
-          single();
+          if (amount == null || amount == 1)
+            single();
+          else
+            barrage(amount);
           break;
         case "barrage":
-          barrage();
+          barrage(amount);
           break;
         case "emote":
           onRaidHandler(null, null, null, true);
@@ -925,7 +950,7 @@ function onMessageHandler(_, _, text, msg)
           onRaidHandler();
           break;
         default:
-          custom(data.commands[i].bonkType);
+          custom(data.commands[i].bonkType, amount);
           break;
       }
 
